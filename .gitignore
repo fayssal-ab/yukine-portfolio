@@ -3,8 +3,12 @@ node_modules
 out
 next-env.d.ts
 *.tsbuildinfo
-.env*.local
 .env
+.env.*
+!.env.example
+bot/.env
+bot/.env.*
+!bot/.env.example
 bot/dist
 bot/backups
 bot/*.pem
