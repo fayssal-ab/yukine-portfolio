@@ -5,10 +5,9 @@ next-env.d.ts
 *.tsbuildinfo
 .env
 .env.*
-!.env.example
+.env.example
 bot/.env
 bot/.env.*
-!bot/.env.example
 bot/dist
 bot/backups
 bot/*.pem

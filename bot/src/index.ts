@@ -21,7 +21,7 @@ const token = process.env.DISCORD_TOKEN;
 if (!token) throw new Error("Set DISCORD_TOKEN in bot/.env.");
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 const player = new Player(client);
 
@@ -51,7 +51,7 @@ interface TicketRow extends RowDataPacket {
 }
 
 interface CountRow extends RowDataPacket {
-  category: "work" | "personal";
+  category: "work" | "personal" | "preparation";
   count: number;
 }
 
@@ -73,32 +73,202 @@ function isGuildInteraction(
   return interaction.inGuild() && interaction.guild !== null;
 }
 
-async function ensureCategory(guild: Guild, name: string) {
-  const found = guild.channels.cache.find(
-    (channel) => channel.type === ChannelType.GuildCategory && channel.name === name,
-  );
-  return found ?? guild.channels.create({ name, type: ChannelType.GuildCategory });
+function privateChannelOverwrites(guild: Guild, owner: GuildMember, botMember: GuildMember) {
+  const permissions = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.Connect,
+    PermissionFlagsBits.Speak,
+  ];
+  return [
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+    { id: owner, allow: permissions },
+    { id: botMember, allow: [...permissions, PermissionFlagsBits.ManageChannels] },
+  ];
 }
 
-async function ensureTextChannel(guild: Guild, name: string, parentId: string) {
+async function ensureCategory(
+  guild: Guild,
+  name: string,
+  owner: GuildMember,
+  botMember: GuildMember,
+  aliases: string[] = [],
+) {
   const found = guild.channels.cache.find(
-    (channel) => channel.type === ChannelType.GuildText && channel.name === name,
+    (channel) => channel.type === ChannelType.GuildCategory && [name, ...aliases].includes(channel.name),
   );
-  if (found) return found;
-  return guild.channels.create({ name, type: ChannelType.GuildText, parent: parentId });
+  if (found?.type === ChannelType.GuildCategory) {
+    if (found.name !== name) await found.setName(name);
+    await found.permissionOverwrites.set(privateChannelOverwrites(guild, owner, botMember));
+    for (const child of guild.channels.cache.filter((channel) => channel.parentId === found.id).values()) {
+      if ("lockPermissions" in child && typeof child.lockPermissions === "function" && !child.permissionsLocked) {
+        await child.lockPermissions();
+      }
+    }
+    return found;
+  }
+  return guild.channels.create({
+    name,
+    type: ChannelType.GuildCategory,
+    permissionOverwrites: privateChannelOverwrites(guild, owner, botMember),
+  });
+}
+
+async function ensureTextChannel(
+  guild: Guild,
+  name: string,
+  parentId: string,
+  topic: string,
+  aliases: string[] = [],
+) {
+  const found = guild.channels.cache.find(
+    (channel) => channel.type === ChannelType.GuildText && [name, ...aliases].includes(channel.name),
+  );
+  if (found?.type === ChannelType.GuildText) {
+    if (found.name !== name || found.parentId !== parentId || found.topic !== topic) {
+      await found.edit({ name, parent: parentId, topic });
+    }
+    if (!found.permissionsLocked) await found.lockPermissions();
+    return found;
+  }
+  const channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: parentId, topic });
+  await channel.lockPermissions();
+  return channel;
+}
+
+async function ensureVoiceChannel(guild: Guild, name: string, parentId: string, aliases: string[] = []) {
+  const found = guild.channels.cache.find(
+    (channel) => channel.type === ChannelType.GuildVoice && [name, ...aliases].includes(channel.name),
+  );
+  if (found?.type === ChannelType.GuildVoice) {
+    if (found.name !== name || found.parentId !== parentId) {
+      await found.edit({ name, parent: parentId });
+    }
+    if (!found.permissionsLocked) await found.lockPermissions();
+    return found;
+  }
+  const channel = await guild.channels.create({ name, type: ChannelType.GuildVoice, parent: parentId });
+  await channel.lockPermissions();
+  return channel;
 }
 
 async function setupServer(guild: Guild) {
-  const info = await ensureCategory(guild, "START HERE");
-  const community = await ensureCategory(guild, "COMMUNITY");
-  const support = await ensureCategory(guild, "SUPPORT");
+  const botMember = guild.members.me ?? await guild.members.fetchMe();
+  const owner = await guild.members.fetch(guild.ownerId);
+  await guild.channels.fetch();
+  const personal = await ensureCategory(guild, "👤 PERSONAL", owner, botMember, ["START HERE"]);
+  const work = await ensureCategory(guild, "💼 WORK", owner, botMember, ["💬 COMMUNITY"]);
+  const legacyCategories = guild.channels.cache.filter(
+    (channel) => channel.type === ChannelType.GuildCategory && ["SUPPORT", "🛠️ ADMINS"].includes(channel.name),
+  );
 
-  const welcome = await ensureTextChannel(guild, "welcome", info.id);
-  const announcements = await ensureTextChannel(guild, "announcements", info.id);
-  await ensureTextChannel(guild, "rules", info.id);
-  await ensureTextChannel(guild, "general", community.id);
-  await ensureTextChannel(guild, "work", community.id);
-  await ensureTextChannel(guild, "portfolio", community.id);
+  const welcome = await ensureTextChannel(guild, "👋・welcome", personal.id, "Your private home base. Start here for a quick guide to this server.", ["welcome"]);
+  const announcements = await ensureTextChannel(guild, "📣・announcements", personal.id, "Personal updates and reminders for your workspace.", ["announcements"]);
+  const rules = await ensureTextChannel(guild, "📜・rules", personal.id, "Your personal server guidelines and routines.", ["rules"]);
+  const personalChat = await ensureTextChannel(guild, "💬・personal-chat", personal.id, "Personal notes, thoughts, and everyday planning.", ["general"]);
+  const personalTasks = await ensureTextChannel(guild, "🧍・personal", personal.id, "Personal goals and life tasks.", ["personal"]);
+  const preparation = await ensureTextChannel(guild, "📚・preparation", personal.id, "Study, preparation, and things to get ready.", ["preparation"]);
+  const studyPlan = await ensureTextChannel(
+    guild,
+    "🗓️・study-plan",
+    personal.id,
+    "Your G1 class timetable and revision plan for controls and January exams.",
+  );
+  const breakTime = await ensureTextChannel(
+    guild,
+    "🎮・break-time",
+    personal.id,
+    "Take a break, use Discord Activities, or share a game.",
+    ["🎰・casino", "🎰｜casino"],
+  );
+  const musicRoom = await ensureVoiceChannel(guild, "🎧・music-room", personal.id, ["music-room"]);
+  const musicGuide = await ensureTextChannel(
+    guild,
+    "🎶・music-guide",
+    personal.id,
+    "Music commands and a reminder that playback requires the bot to be online.",
+  );
+  const inbox = await ensureTextChannel(
+    guild,
+    "📥・inbox",
+    personal.id,
+    "Private inbox for support requests and quick capture.",
+    ["inbox"],
+  );
+
+  const workTasks = await ensureTextChannel(guild, "💼・work", work.id, "Your work home base. Use /task add and choose Work.", ["work"]);
+  const projects = await ensureTextChannel(guild, "🚀・projects", work.id, "Project notes, milestones, and next actions.");
+  const missions = await ensureTextChannel(guild, "✅・missions", work.id, "The next concrete actions that move your work forward.");
+  const planning = await ensureTextChannel(guild, "🗓️・planning", work.id, "Plan the week, priorities, and deadlines.");
+  const ideas = await ensureTextChannel(guild, "💡・ideas", work.id, "Capture ideas to review and turn into projects.");
+  const portfolio = await ensureTextChannel(guild, "🌐・portfolio", work.id, "Portfolio links, updates, and work you want to showcase.", ["portfolio"]);
+  const modLogs = await ensureTextChannel(
+    guild,
+    "🔨・mod-logs",
+    work.id,
+    "Private admin notes. This bot does not automatically log moderation actions.",
+    ["🔨｜mod-logs"],
+  );
+
+  for (const category of legacyCategories.values()) {
+    if (!guild.channels.cache.some((channel) => channel.parentId === category.id)) {
+      await category.delete("Empty category replaced by personal/work layout");
+    }
+  }
+
+  await guild.channels.setPositions([
+    { channel: personal.id, position: 0 },
+    ...[
+      welcome,
+      announcements,
+      rules,
+      personalChat,
+      personalTasks,
+      preparation,
+      studyPlan,
+      breakTime,
+      musicRoom,
+      musicGuide,
+      inbox,
+    ].map(
+      (channel, index) => ({ channel: channel.id, position: index + 1 }),
+    ),
+    { channel: work.id, position: 11 },
+    ...[workTasks, projects, missions, planning, ideas, portfolio, modLogs].map(
+      (channel, index) => ({ channel: channel.id, position: index + 12 }),
+    ),
+  ]);
+
+  const welcomeMessages = await welcome.messages.fetch({ limit: 1 });
+  if (welcomeMessages.size === 0) {
+    await welcome.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x45bcf4)
+          .setTitle("✨ Your YUKINE space")
+          .setDescription("A calm place for life, ideas, and getting things done. Personal is at the top; Work is kept below it.")
+          .addFields(
+            { name: "👤 PERSONAL", value: "Daily life, preparation, music, and quick notes." },
+            { name: "💼 WORK", value: "Projects, missions, planning, ideas, and portfolio." },
+            { name: "🤖 Quick commands", value: "`/task add` · `/task list` · `/task done` · `/remind add` · `/music play` · `/stats`" },
+          )
+          .setFooter({ text: "Small steps, steady progress." }),
+      ],
+    });
+  }
+
+  const planMessages = await studyPlan.messages.fetch({ limit: 10 });
+  if (!planMessages.some((message) => message.author.id === botMember.id && message.content.includes("G1 STUDY PLAN"))) {
+    const planParts = [
+      `## 📚 G1 STUDY PLAN\n*Based on your timetable photo. Controls are estimated around **23 Nov 2026**; confirm the official date and subjects with your teachers.*\n\n### 🏫 Your weekly classes\n- **Mon:** 08:30–10:00 Recherche opérationnelle · 10:15–11:45 Virtualisation / Cloud\n- **Tue (G1):** 08:30–10:00 Administration UNIX · 10:15–11:45 NoSQL\n- **Wed:** 10:15–11:45 Communication professionnelle 3 · 14:00–16:00 DOTNET · 16:15–17:45 Analyse des données\n- **Thu:** 08:30–12:15 Programmation avancée\n- **Fri:** 08:30–10:00 Machine Learning · 10:15–11:45 Introduction & éthique de l’IA · 15:00–16:30 Advanced English 1\n- **Sat (G1):** 08:30–10:30 Administration Oracle 1 · 10:45–12:15 Dev Mobile\n- **Sun:** no class shown — use for a light weekly review and rest.\n\n### 🗓️ Weekly revision rhythm\n- **Mon 14:30–16:00:** RO exercises + Cloud recap.\n- **Tue 14:30–16:00:** UNIX practice + NoSQL queries.\n- **Wed 08:30–09:15:** Communication notes; **18:30–19:15:** alternate DOTNET / Data Analysis exercises.\n- **Thu 14:30–16:00:** Programmation avancée exercises.\n- **Fri 13:15–14:15:** alternate ML / IA; English vocabulary 20 min after class.\n- **Sat 14:30–16:00:** alternate Oracle SQL / Dev Mobile practice.\n- **Sun 10:00–11:00:** weakest subject; **11:15–11:45:** plan next week. Keep the rest of Sunday free.\n\nKeep blocks focused: 10 min recall, 35–45 min exercises, then note mistakes. Take short breaks; move a block if class or travel runs late.`,
+      `## 🎯 CONTROL PREP — NOW TO AROUND 23 NOV\n*Date is approximate; if your control dates differ, shift these blocks to the day before each control.*\n\n- **6–8 Nov:** collect notes and exercises; mark each subject green/yellow/red; start with the two weakest.\n- **9–15 Nov:** make one-page summaries and solve class exercises for all subjects. Do two focused weekend blocks, not an all-nighter.\n- **16–19 Nov:** redo difficult exercises without looking at solutions; ask about anything still unclear.\n- **20–22 Nov:** short timed practice, review mistake notes, prepare materials, and sleep normally. No huge new chapters the night before.\n- **Control week:** after each control, write down what was difficult, then return to the normal class/revision rhythm.\n\n## 🎓 JANUARY EXAM PREP — EXAMS START 01 JAN 2027\n- **24 Nov–6 Dec:** catch up on lessons; finish summaries for RO, Cloud, UNIX, NoSQL, Communication, DOTNET, Data Analysis, PA, ML, IA, English, Oracle, and Dev Mobile.\n- **7–20 Dec:** second pass — active recall plus exercises. Rotate technical subjects; keep English/Communication in short sessions twice a week.\n- **21–27 Dec:** timed mock questions, review mistakes, and prioritize weak subjects.\n- **28–31 Dec:** light recap of formulas, commands, definitions, and summaries. Prepare what you need and protect sleep.\n\n### ✅ Use the bot\n/task add → choose Preparation for a study task; /task list to see it; /task done when finished. /remind add stores reminders in the database, but delivery needs the bot online at the due time. This channel and pinned plan stay visible while the bot is offline.`,
+    ];
+    for (const content of planParts) {
+      const message = await studyPlan.send({ content, allowedMentions: { parse: [] } });
+      await message.pin();
+    }
+  }
 
   await execute(
     `INSERT INTO guild_settings (guild_id, welcome_channel_id, announcement_channel_id, ticket_category_id)
@@ -107,7 +277,7 @@ async function setupServer(guild: Guild) {
        welcome_channel_id = VALUES(welcome_channel_id),
        announcement_channel_id = VALUES(announcement_channel_id),
        ticket_category_id = VALUES(ticket_category_id)`,
-    [guild.id, welcome.id, announcements.id, support.id],
+    [guild.id, welcome.id, announcements.id, personal.id],
   );
 }
 
@@ -115,7 +285,7 @@ async function handleTask(interaction: ChatInputCommandInteraction) {
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === "add") {
     const categoryValue = interaction.options.getString("category", true);
-    const category = categoryValue === "work" ? "work" : "personal";
+    const category = categoryValue;
     const title = interaction.options.getString("title", true);
     const result = await execute(
       "INSERT INTO tasks (guild_id, user_id, category, title, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -385,16 +555,18 @@ async function handleStats(interaction: ChatInputCommandInteraction & { guild: G
   );
   const work = Number(taskStats.find((row) => row.category === "work")?.count ?? 0);
   const personal = Number(taskStats.find((row) => row.category === "personal")?.count ?? 0);
-  const total = work + personal;
+  const preparation = Number(taskStats.find((row) => row.category === "preparation")?.count ?? 0);
+  const total = work + personal + preparation;
   const workPercent = total ? Math.round((work / total) * 100) : 0;
-  const personalPercent = total ? 100 - workPercent : 0;
+  const personalPercent = total ? Math.round((personal / total) * 100) : 0;
+  const preparationPercent = total ? Math.max(0, 100 - workPercent - personalPercent) : 0;
 
   const fields = [
     { name: "Server members", value: String(interaction.guild.memberCount), inline: true },
     {
       name: "Your open tasks",
       value: total
-        ? `Work: ${work} (${workPercent}%)\nPersonal: ${personal} (${personalPercent}%)`
+        ? `Work: ${work} (${workPercent}%)\nPersonal: ${personal} (${personalPercent}%)\nPreparation: ${preparation} (${preparationPercent}%)`
         : "None yet. Add one with `/task add`.",
       inline: true,
     },
@@ -413,8 +585,8 @@ async function handleStats(interaction: ChatInputCommandInteraction & { guild: G
 
   const embed = new EmbedBuilder()
     .setColor(0x45bcf4)
-    .setTitle("Server & task stats")
-    .setDescription("Work/personal percentages are based on your open task count, not tracked time.")
+    .setTitle("Private workspace & task stats")
+    .setDescription("Percentages are based on your open task count, not tracked time.")
     .addFields(fields);
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
@@ -461,7 +633,7 @@ async function handleInteraction(interaction: Interaction) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await setupServer(interaction.guild);
       await interaction.editReply(
-        "Server layout is ready. Missing channels were created, and welcome, announcement, and ticket settings were saved.",
+        "Your server is organized: 👤 PERSONAL is at the top and 💼 WORK is below. Channels are private to you and the bot, with a guide posted in welcome.",
       );
       return;
     }
@@ -590,21 +762,6 @@ async function deliverDueReminders() {
     reminderRunInProgress = false;
   }
 }
-
-client.on("guildMemberAdd", async (member: GuildMember) => {
-  try {
-    const settings = await settingsFor(member.guild.id);
-    if (!settings) return;
-    const channel = await member.guild.channels.fetch(settings.welcome_channel_id);
-    if (channel?.isTextBased() && "send" in channel) {
-      await channel.send({
-        content: `Welcome ${member} to **${member.guild.name}**! Please check #rules and introduce yourself.`,
-      });
-    }
-  } catch (error) {
-    console.error("Could not send the welcome message:", error);
-  }
-});
 
 client.on("interactionCreate", (interaction) => {
   void handleInteraction(interaction);

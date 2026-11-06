@@ -42,13 +42,23 @@ export async function initializeDatabase() {
       id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       guild_id VARCHAR(32) NOT NULL,
       user_id VARCHAR(32) NOT NULL,
-      category ENUM('work', 'personal') NOT NULL,
+      category ENUM('work', 'personal', 'preparation') NOT NULL,
       title VARCHAR(200) NOT NULL,
       created_at DATETIME(3) NOT NULL,
       done_at DATETIME(3) NULL,
       INDEX tasks_owner_open (guild_id, user_id, done_at, category)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  const taskCategoryColumns = await rows<RowDataPacket & { COLUMN_TYPE: string }>(
+    `SELECT COLUMN_TYPE FROM information_schema.columns
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tasks' AND COLUMN_NAME = 'category'`,
+  );
+  if (taskCategoryColumns[0]?.COLUMN_TYPE === "enum('work','personal')") {
+    await db.query(
+      "ALTER TABLE tasks MODIFY category ENUM('work', 'personal', 'preparation') NOT NULL",
+    );
+  }
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS reminders (

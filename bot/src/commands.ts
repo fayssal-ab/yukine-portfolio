@@ -3,11 +3,11 @@ import { PermissionFlagsBits, SlashCommandBuilder } from "discord.js";
 export const commands = [
   new SlashCommandBuilder()
     .setName("setup")
-    .setDescription("Create the recommended server channels and categories")
+    .setDescription("Organize your server into personal and work sections")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
     .setName("task")
-    .setDescription("Manage your private work and personal tasks")
+    .setDescription("Manage your private work, personal, and preparation tasks")
     .addSubcommand((subcommand) =>
       subcommand
         .setName("add")
@@ -15,11 +15,12 @@ export const commands = [
         .addStringOption((option) =>
           option
             .setName("category")
-            .setDescription("Work or personal")
+            .setDescription("Work, personal, or preparation")
             .setRequired(true)
             .addChoices(
               { name: "Work", value: "work" },
               { name: "Personal", value: "personal" },
+              { name: "Preparation", value: "preparation" },
             ),
         )
         .addStringOption((option) =>
@@ -37,6 +38,7 @@ export const commands = [
             .addChoices(
               { name: "Work", value: "work" },
               { name: "Personal", value: "personal" },
+              { name: "Preparation", value: "preparation" },
             ),
         ),
     )
@@ -71,7 +73,7 @@ export const commands = [
     .setDescription("Show the portfolio link"),
   new SlashCommandBuilder()
     .setName("stats")
-    .setDescription("Show server and personal work/personal task stats"),
+    .setDescription("Show private workspace and work/personal/preparation task stats"),
   new SlashCommandBuilder()
     .setName("announce")
     .setDescription("Post an announcement in the configured channel")

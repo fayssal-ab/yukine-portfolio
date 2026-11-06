@@ -9,11 +9,15 @@ type Status = { kind: "idle" | "sending" | "sent" | "error"; msg?: string };
 
 const field =
   "peer w-full border-b border-line bg-transparent pb-3 pt-6 text-lg text-paper outline-none transition-colors placeholder:text-transparent focus:border-brand";
+const compactField =
+  "peer w-full border-b border-line bg-transparent pb-2 pt-5 text-base text-paper outline-none transition-colors placeholder:text-transparent focus:border-brand";
 const label =
   "pointer-events-none absolute start-0 top-6 text-lg text-dim transition-all duration-200 peer-focus:top-0 peer-focus:text-xs peer-focus:text-brand peer-[:not(:placeholder-shown)]:top-0 peer-[:not(:placeholder-shown)]:text-xs";
+const compactLabel =
+  "pointer-events-none absolute start-0 top-5 text-base text-dim transition-all duration-200 peer-focus:top-0 peer-focus:text-xs peer-focus:text-brand peer-[:not(:placeholder-shown)]:top-0 peer-[:not(:placeholder-shown)]:text-xs";
 
 /** Name, how to reach you, message. That's it. */
-export default function ContactForm() {
+export default function ContactForm({ compact = false }: { compact?: boolean }) {
   const t = useT();
   const c = t.contact;
   const lang = useLang();
@@ -38,10 +42,10 @@ export default function ContactForm() {
   }
 
   return (
-    <div className="relative rounded-[28px] border border-line bg-ink-2/70 p-6 backdrop-blur-xl md:p-10">
+    <div className={compact ? "relative mt-5" : "relative rounded-[28px] border border-line bg-ink-2/70 p-6 backdrop-blur-xl md:p-10"}>
       <AnimatePresence mode="wait">
         {status.kind === "sent" ? (
-          <motion.div key="sent" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex min-h-[320px] flex-col items-start justify-center">
+          <motion.div key="sent" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className={`flex flex-col items-start justify-center ${compact ? "py-6" : "min-h-[320px]"}`}>
             <span className="grid h-14 w-14 place-items-center rounded-full bg-brand text-2xl text-on-brand">✓</span>
             <h3 className="mt-6 font-display text-3xl font-bold">{c.sentTitle}</h3>
             <p className="mt-3 max-w-sm text-dim">{c.sentText}</p>
@@ -50,20 +54,20 @@ export default function ContactForm() {
             </button>
           </motion.div>
         ) : (
-          <motion.form key="form" onSubmit={submit} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="grid gap-7">
-            <div className="grid gap-7 md:grid-cols-2">
+          <motion.form key="form" onSubmit={submit} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className={`grid ${compact ? "gap-4" : "gap-7"}`}>
+            <div className={`grid ${compact ? "gap-4" : "gap-7 md:grid-cols-2"}`}>
               <div className="relative">
-                <input id="name" name="name" required minLength={2} maxLength={80} placeholder={c.name} className={field} autoComplete="name" />
-                <label htmlFor="name" className={label}>{c.name}</label>
+                <input id="name" name="name" required minLength={2} maxLength={80} placeholder={c.name} className={compact ? compactField : field} autoComplete="name" />
+                <label htmlFor="name" className={compact ? compactLabel : label}>{c.name}</label>
               </div>
               <div className="relative">
-                <input id="contact" name="contact" required minLength={3} maxLength={120} placeholder={c.reach} className={field} />
-                <label htmlFor="contact" className={label}>{c.reach}</label>
+                <input id="contact" name="contact" required minLength={3} maxLength={120} placeholder={c.reach} className={compact ? compactField : field} />
+                <label htmlFor="contact" className={compact ? compactLabel : label}>{c.reach}</label>
               </div>
             </div>
             <div className="relative">
-              <textarea id="message" name="message" required minLength={10} maxLength={1800} rows={4} placeholder={c.message} className={`${field} resize-none`} />
-              <label htmlFor="message" className={label}>{c.message}</label>
+              <textarea id="message" name="message" required minLength={10} maxLength={1800} rows={compact ? 3 : 4} placeholder={c.message} className={`${compact ? compactField : field} resize-none`} />
+              <label htmlFor="message" className={compact ? compactLabel : label}>{c.message}</label>
             </div>
             <input type="hidden" name="lang" value={lang} />
             {/* honeypot */}

@@ -8,7 +8,8 @@ import { contact } from "@/lib/data";
 import { stripLocale } from "@/lib/i18n/config";
 import { XIcon } from "./XButton";
 import { DiscordIcon } from "./DiscordButton";
-import { Link, useT } from "./I18n";
+import { useT } from "./I18n";
+import ContactForm from "./ContactForm";
 
 /** Floating "Let's talk" button on every page: X, Discord or the form, one tap away. */
 export default function ContactDock() {
@@ -16,9 +17,13 @@ export default function ContactDock() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [composing, setComposing] = useState(false);
   const [show, setShow] = useState(false);
 
-  useEffect(() => setOpen(false), [path]);
+  useEffect(() => {
+    setOpen(false);
+    setComposing(false);
+  }, [path]);
   useEffect(() => {
     const id = setTimeout(() => setShow(true), 2200);
     return () => clearTimeout(id);
@@ -50,24 +55,32 @@ export default function ContactDock() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.95 }}
             transition={{ duration: 0.25 }}
-            className="w-[300px] origin-bottom rounded-3xl border border-line bg-ink-2/95 p-5 shadow-[0_30px_80px_rgba(0,0,0,.6)] backdrop-blur-xl"
+            className="w-[min(360px,calc(100vw-2rem))] origin-bottom rounded-3xl border border-line bg-ink-2/95 p-5 shadow-[0_30px_80px_rgba(0,0,0,.6)] backdrop-blur-xl"
           >
             <p className="font-display text-lg font-bold">{t.dock.title}</p>
             <p className="mt-1 text-sm text-dim">{t.dock.text}</p>
-            <div className="mt-5 grid gap-2">
-              <a href={contact.x} target="_blank" rel="noopener" className="flex items-center gap-3 rounded-2xl bg-paper px-4 py-3 font-semibold text-ink transition-transform hover:-translate-y-0.5">
-                <XIcon className="h-4 w-4" />
-                <span dir="ltr">{contact.xHandle}</span>
-                <span className="ms-auto flip-rtl">↗</span>
-              </a>
-              <button onClick={copy} className="flex items-center gap-3 rounded-2xl bg-[#5865F2] px-4 py-3 text-start font-semibold text-white transition-transform hover:-translate-y-0.5">
-                <DiscordIcon className="h-3.5 w-4" /> {copied ? t.discord.copied : contact.discord}
-                <span className="ms-auto text-xs opacity-70">{copied ? "" : t.discord.copy}</span>
-              </button>
-              <Link href="/contact" className="flex items-center gap-3 rounded-2xl border border-line px-4 py-3 font-semibold transition-colors hover:border-brand">
-                ✉ {t.dock.brief} <span className="ms-auto flip-rtl">→</span>
-              </Link>
-            </div>
+            {composing ? (
+              <ContactForm compact />
+            ) : (
+              <div className="mt-5 grid gap-2">
+                <a href={contact.x} target="_blank" rel="noopener" className="flex items-center gap-3 rounded-2xl bg-paper px-4 py-3 font-semibold text-ink transition-transform hover:-translate-y-0.5">
+                  <XIcon className="h-4 w-4" />
+                  <span dir="ltr">{contact.xHandle}</span>
+                  <span className="ms-auto flip-rtl">↗</span>
+                </a>
+                <button onClick={copy} className="flex items-center gap-3 rounded-2xl bg-[#5865F2] px-4 py-3 text-start font-semibold text-white transition-transform hover:-translate-y-0.5">
+                  <DiscordIcon className="h-3.5 w-4" /> {copied ? t.discord.copied : contact.discord}
+                  <span className="ms-auto text-xs opacity-70">{copied ? "" : t.discord.copy}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComposing(true)}
+                  className="flex items-center gap-3 rounded-2xl border border-line px-4 py-3 text-start font-semibold transition-colors hover:border-brand"
+                >
+                  ✉ {t.dock.brief} <span className="ms-auto flip-rtl">→</span>
+                </button>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

@@ -4,10 +4,12 @@ This is a separate, always-on Discord bot service. It does not run inside the po
 
 ## Features
 
-- `/setup` creates missing `START HERE`, `COMMUNITY`, and `SUPPORT` categories and their channels. Existing channels with those names are reused.
-- `/task` stores private work and personal task lists for each member.
+- `/setup` organizes the server into two private sections: `👤 PERSONAL` first and `💼 WORK` below it. It adds emoji-labeled channels with descriptions and a welcome guide, while preserving existing messages. The break-time channel is for Discord Activities; this bot does not include casino/economy commands. Categories are visible only to the server owner and bot.
+- `/setup` also creates `🗓️・study-plan` with a pinned G1 class timetable and revision plan for the estimated November controls and January 1 exams. The pinned plan remains available while the bot is offline.
+- `🎶・music-guide` explains music commands and their online requirement; the guide remains available while the bot is offline.
+- `/task` stores private work, personal, and preparation task lists for each member.
 - `/remind` sends private reminders by DM; reminders survive restarts in MySQL.
-- `/ticket` creates private support channels and lets the owner or a moderator close them.
+- `/ticket` can still create an optional private ticket manually; the fixed `inbox` channel is the normal place for personal requests, so messages do not create extra tickets.
 - `/portfolio` shares the configured portfolio link.
 - `/announce`, `/timeout`, and `/clear` provide basic moderator tools.
 - `/music` plays YouTube and SoundCloud URLs with a queue, pause, resume, skip, and stop.
@@ -22,7 +24,7 @@ Tasks, reminders, tickets, and server settings are stored in MySQL. On normal st
 - The bot's YouTube/SoundCloud extractors are installed with the bot dependencies.
 - A Discord application and bot created in the [Discord Developer Portal](https://discord.com/developers/applications)
 - The bot needs the `bot` and `applications.commands` OAuth scopes. Grant only the permissions it needs: View Channels, Send Messages, Read Message History, Manage Channels, Manage Messages, Moderate Members, Connect, and Speak.
-- Enable the **Server Members Intent** in the Developer Portal for welcome messages. Slash commands and music do not need Message Content Intent.
+- The bot does not request privileged gateway intents. Welcome-on-join events are not enabled; slash commands, reminders, and music work without them.
 
 ## Run locally
 
@@ -41,6 +43,10 @@ npm run dev
 ```
 
 For production, run `npm run build`, `npm run register`, and `npm start` on an always-on worker/VPS. You can set `STAFF_ROLE_ID` to a server role that should see support tickets.
+
+Run `/setup` from the account that owns the server. It organizes personal channels above work channels, and makes both sections private to the owner and bot. This does not prevent someone from joining through an invite; do not share invite links. New members are not kicked automatically.
+
+Use `/task add` and choose Work, Personal, or Preparation; `/task list` displays open tasks and `/task done` marks them complete. Reminders use `/remind`; delivery at the due time requires the bot to be online. The `music-room` is a private voice channel; join it and use `/music play` with a supported HTTPS link.
 
 ## Optional database reset (destructive)
 
