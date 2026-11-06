@@ -6,9 +6,10 @@ Next.js 16 · React 19 · Tailwind v4 · Motion · Lenis · three.js (React Thre
 
 ```bash
 npm install
-cp .env.example .env.local   # add your Discord webhook
 npm run dev                  # http://localhost:3000
 ```
+
+Set local environment variables in the ignored `.env.local` file before using the contact form or admin dashboard. Never commit it.
 
 Low on RAM? Build once and serve the build instead of `dev`:
 
@@ -26,9 +27,27 @@ Messages from the form go to `/api/contact`, which posts them to a Discord chann
 
 Without the webhook, the form tells visitors to DM @yuuukine1 on X instead.
 
-## Deploy
+## Private dashboard
 
-Netlify or Vercel: import the repo, add `DISCORD_WEBHOOK_URL`, deploy. No database needed.
+The admin area is not linked from public pages. Open `/login` or `/admin` directly and sign in with the authorized GitHub account (`fayssal-ab`). Other GitHub accounts are denied.
+
+The dashboard includes anonymous page-view and successful contact-request totals, plus private to-do and notes lists. It stores page paths and timestamps only; visitor IPs are HMAC-hashed only for rate limiting, and those short-lived hashes are removed after one day. Contact message contents are not stored in the dashboard.
+
+The contact form allows **3 valid messages per IP per 10 minutes**. The limit is shared across serverless instances using Aiven MySQL, rather than relying on per-process memory.
+
+### Required environment variables
+
+Configure these for both local use and the deployed Netlify site:
+
+- `AUTH_SECRET` — a long random secret (for example, generate one with `openssl rand -base64 32`).
+- `AUTH_GITHUB_ID` and `AUTH_GITHUB_SECRET` — GitHub OAuth App credentials. Set its callback URL to `https://<your-site-domain>/api/auth/callback/github`.
+- `ADMIN_GITHUB_USERNAME=fayssal-ab` — the only GitHub account allowed into the admin area.
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` — Aiven MySQL connection settings.
+- `DB_SSL_CA` — Aiven CA certificate contents for deployment. Locally, `DB_SSL_CA_PATH` may point to a downloaded CA file instead.
+- `DISCORD_WEBHOOK_URL` — the contact destination webhook. Keep it secret.
+- `DISCORD_PING_USER_ID` — optional Discord user ID to mention after a successful contact request.
+
+The app creates only tables prefixed `portfolio_` and does not alter the Discord bot's tables. After setting environment variables in Netlify, redeploy the site.
 
 ## Pages
 

@@ -5,6 +5,7 @@ import { isLocale, matchLocale } from "@/lib/i18n/config";
 // choice first (cookie), then their browser language.
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  if (/^\/(?:admin|login)(?:\/|$)/.test(pathname)) return;
   const first = pathname.split("/")[1];
   if (isLocale(first)) return;
 

@@ -1,19 +1,9 @@
 import { NextResponse } from "next/server";
+import { isSameOrigin, rateLimitIdentifier } from "@/lib/admin-api";
+import { consumeRateLimit, ensurePortalTables, recordContactEvent } from "@/lib/portal-db";
 
 // Sends each project request straight to a Discord channel through a webhook.
 // Env: DISCORD_WEBHOOK_URL (required), DISCORD_PING_USER_ID (optional, pings you so the phone buzzes).
-
-const WINDOW_MS = 10 * 60 * 1000;
-const MAX_PER_WINDOW = 4;
-const hits = new Map<string, number[]>();
-
-function limited(ip: string) {
-  const now = Date.now();
-  const recent = (hits.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
-  recent.push(now);
-  hits.set(ip, recent);
-  return recent.length > MAX_PER_WINDOW;
-}
 
 const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 // keep user text from breaking out of the embed or faking mentions
@@ -24,15 +14,28 @@ export async function POST(req: Request) {
   if (!webhook) {
     return NextResponse.json({ error: "The contact form isn't connected yet. Please DM @yuuukine1 on X for now." }, { status: 503 });
   }
+  if (!isSameOrigin(req)) {
+    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
+  }
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
-  if (limited(ip)) {
-    return NextResponse.json({ error: "Too many messages. Please wait a few minutes and try again." }, { status: 429 });
+  const declaredLength = Number(req.headers.get("content-length") || 0);
+  if (declaredLength > 12_000) {
+    return NextResponse.json({ error: "Message is too large." }, { status: 413 });
+  }
+
+  let rawBody: string;
+  try {
+    rawBody = await req.text();
+    if (rawBody.length > 12_000) {
+      return NextResponse.json({ error: "Message is too large." }, { status: 413 });
+    }
+  } catch {
+    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
   let body: Record<string, unknown>;
   try {
-    body = await req.json();
+    body = JSON.parse(rawBody) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
@@ -46,6 +49,20 @@ export async function POST(req: Request) {
 
   if (name.length < 2 || reach.length < 3 || message.length < 10) {
     return NextResponse.json({ error: "Please add your name, how to reach you, and a few words about the project." }, { status: 400 });
+  }
+
+  try {
+    await ensurePortalTables();
+    const identifier = await rateLimitIdentifier(req);
+    if ((await consumeRateLimit(identifier, "contact", 600)) > 3) {
+      return NextResponse.json(
+        { error: "Too many messages. Please wait a few minutes and try again." },
+        { status: 429, headers: { "Retry-After": "600" } },
+      );
+    }
+  } catch (err) {
+    console.error("[contact] rate limit unavailable:", err);
+    return NextResponse.json({ error: "Couldn't send right now. Please try again later." }, { status: 503 });
   }
 
   const ping = process.env.DISCORD_PING_USER_ID?.trim();
@@ -73,6 +90,12 @@ export async function POST(req: Request) {
   } catch (err) {
     console.error("[contact] webhook failed:", err);
     return NextResponse.json({ error: "Couldn't send right now. Please DM @yuuukine1 on X instead." }, { status: 502 });
+  }
+
+  try {
+    await recordContactEvent();
+  } catch (err) {
+    console.error("[contact] could not record dashboard statistic:", err);
   }
 
   return NextResponse.json({ ok: true });

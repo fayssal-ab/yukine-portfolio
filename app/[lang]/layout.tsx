@@ -9,6 +9,7 @@ import Preloader from "@/components/Preloader";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
 import ContactDock from "@/components/ContactDock";
+import PageViewTracker from "@/components/PageViewTracker";
 import { I18nProvider } from "@/components/I18n";
 import { site } from "@/lib/data";
 import { getDict } from "@/lib/i18n";
@@ -54,6 +55,7 @@ export default async function RootLayout({ children, params }: { children: React
     <html lang={info.html} dir={info.dir} className={fonts}>
       <body>
         <I18nProvider lang={lang} t={t}>
+          <PageViewTracker />
           <Preloader />
           <SmoothScroll />
           <Cursor />
