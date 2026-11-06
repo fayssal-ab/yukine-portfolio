@@ -29,7 +29,7 @@ Without the webhook, the form tells visitors to DM @yuuukine1 on X instead.
 
 ## Private dashboard
 
-The admin area is not linked from public pages. Open `/login` or `/admin` directly and sign in with the authorized GitHub account (`fayssal-ab`). Other GitHub accounts are denied.
+The admin area is not linked from public pages. Open `/login` or `/admin` directly (language-prefixed links such as `/en/login` or `/ar/admin` redirect there) and sign in with the authorized GitHub account (`fayssal-ab`). Other GitHub accounts are denied. If the database cannot be reached, the dashboard shows the exact reason (missing variable, bad certificate, wrong password, unreachable host).
 
 The dashboard includes anonymous page-view and successful contact-request totals, plus private to-do and notes lists. It stores page paths and timestamps only; visitor IPs are HMAC-hashed only for rate limiting, and those short-lived hashes are removed after one day. Contact message contents are not stored in the dashboard.
 
@@ -44,7 +44,7 @@ Configure these for both local use and the deployed Netlify site:
 - `AUTH_URL=https://yukine.netlify.app` (optional on Netlify production, where the main site URL is used automatically) — pins the OAuth callback to the canonical domain. `/login` and `/admin` opened on a deploy-permalink host are redirected there.
 - `ADMIN_GITHUB_USERNAME=fayssal-ab` — the only GitHub account allowed into the admin area.
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` — Aiven MySQL connection settings.
-- `DB_SSL_CA` — Aiven CA certificate contents for deployment. Locally, `DB_SSL_CA_PATH` may point to a downloaded CA file instead.
+- `DB_SSL_CA` — Aiven CA certificate contents for deployment (raw PEM, one line with `\n` escapes, or base64 all work). Locally, `DB_SSL_CA_PATH` may point to a downloaded CA file instead.
 - `DISCORD_WEBHOOK_URL` — the contact destination webhook. Keep it secret.
 - `DISCORD_PING_USER_ID` — optional Discord user ID to mention after a successful contact request.
 

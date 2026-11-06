@@ -94,11 +94,13 @@ export default function ShapeScene({ kind = "knot" }: { kind?: ShapeKind }) {
         <Suspense fallback={null}>
           {kind.startsWith("mascot") ? (
             <>
-              <ambientLight intensity={0.55} />
-              <directionalLight position={[3, 4, 5]} intensity={1.6} />
-              <pointLight position={[-3, 1, 2]} intensity={8} color="#c642f3" />
-              <pointLight position={[3, -1, 2]} intensity={6} color="#45bcf4" />
-              <Mascot scale={0.88} position={[0, 0.8, 0]} pose={(kind.split("-")[1] as Pose) || "wave"} />
+              {/* soft studio light so the figure keeps its painted colours; brand colours only as rims */}
+              <ambientLight intensity={0.35} />
+              <directionalLight position={[2.5, 4, 5]} intensity={1.3} color="#fff4e6" />
+              <directionalLight position={[-3, 1, 3]} intensity={0.6} color="#e8eeff" />
+              <pointLight position={[-3, 1.5, -2.5]} intensity={4} color="#c642f3" />
+              <pointLight position={[3, -0.5, -2.5]} intensity={5} color="#45bcf4" />
+              <Mascot scale={0.9} position={[0, 0.85, 0]} pose={(kind.split("-")[1] as Pose) || "read"} />
             </>
           ) : (
             <Spinner kind={kind} />

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2/promise";
 import { isSameOrigin, requireAdmin } from "@/lib/admin-api";
-import { ensurePortalTables, execute, rows } from "@/lib/portal-db";
+import { describeDbError, ensurePortalTables, execute, rows } from "@/lib/portal-db";
 
 type AdminItem = RowDataPacket & {
   id: number;
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   if (unauthorized) return unauthorized;
 
   const kind = new URL(request.url).searchParams.get("kind");
-  if (kind !== "task" && kind !== "note") {
+  if (kind !== null && kind !== "task" && kind !== "note") {
     return NextResponse.json({ error: "Choose tasks or notes." }, { status: 400 });
   }
 
@@ -26,10 +26,10 @@ export async function GET(request: Request) {
     const items = await rows<AdminItem>(
       `SELECT id, kind, title, content, is_done, created_at
        FROM portfolio_admin_items
-       WHERE kind = ?
-       ORDER BY ${kind === "task" ? "is_done ASC, " : ""}created_at DESC
-       LIMIT 100`,
-      [kind],
+       ${kind ? "WHERE kind = ?" : ""}
+       ORDER BY is_done ASC, created_at DESC
+       LIMIT 200`,
+      kind ? [kind] : [],
     );
     return NextResponse.json({
       items: items.map((item) => ({
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     console.error("[admin/items] failed to load items:", error);
-    return NextResponse.json({ error: "Could not load dashboard items." }, { status: 503 });
+    return NextResponse.json({ error: `Could not load dashboard items. ${describeDbError(error)}` }, { status: 503 });
   }
 }
 
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ id: result.insertId }, { status: 201 });
   } catch (error) {
     console.error("[admin/items] failed to create item:", error);
-    return NextResponse.json({ error: "Could not save this item." }, { status: 503 });
+    return NextResponse.json({ error: `Could not save this item. ${describeDbError(error)}` }, { status: 503 });
   }
 }
 
@@ -120,7 +120,7 @@ export async function PATCH(request: Request) {
     if (typeof body.done === "boolean") {
       result = await execute(
         "UPDATE portfolio_admin_items SET is_done = ? WHERE id = ? AND kind = 'task'",
-        [body.done, id],
+        [body.done ? 1 : 0, id],
       );
     } else if (title !== undefined || content !== undefined) {
       const updates = [
@@ -146,7 +146,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[admin/items] failed to update item:", error);
-    return NextResponse.json({ error: "Could not update this item." }, { status: 503 });
+    return NextResponse.json({ error: `Could not update this item. ${describeDbError(error)}` }, { status: 503 });
   }
 }
 
@@ -171,6 +171,6 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[admin/items] failed to delete item:", error);
-    return NextResponse.json({ error: "Could not delete this item." }, { status: 503 });
+    return NextResponse.json({ error: `Could not delete this item. ${describeDbError(error)}` }, { status: 503 });
   }
 }

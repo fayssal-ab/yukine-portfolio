@@ -2,191 +2,260 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Float, Outlines } from "@react-three/drei";
+import { Float } from "@react-three/drei";
 import * as THREE from "three";
 
 /**
- * Kai: YUKINE's original anime mascot, built from primitives and cel-shaded
- * (3-step toon ramp + ink outlines) so he reads like a 2D anime drawing.
- * Silver-lavender layered hair with cyan tips, big violet eyes, a black
- * techwear jacket with glowing seams and a headset resting on his neck.
- * Eyes follow the pointer and blink; each page gives him a pose and a prop.
+ * Kai: YUKINE's original mascot, modelled like a soft-vinyl chibi figure.
+ * Chunky wheat-blond locks, big amber eyes with a serious little pout,
+ * a forest-green parka with a cream fur collar and hood, white tee, jeans,
+ * brown boots and his red book. Built from primitives with matte "painted
+ * vinyl" materials. Eyes follow the pointer and blink; each page gives him a
+ * pose and a prop.
  */
 
-export type Pose = "idle" | "wave" | "laptop" | "think" | "cheer" | "lost";
+export type Pose = "idle" | "read" | "wave" | "laptop" | "think" | "cheer" | "lost";
 
 const C = {
-  skin: "#ffe3d6",
-  hair: "#dcd4f5",
-  hairShade: "#a99fd6",
-  tip: "#45bcf4",
-  iris: "#9b4dff",
-  jacket: "#17131f",
-  seam: "#c642f3",
-  pants: "#2a2438",
-  shoe: "#f6f2e7",
-  ink: "#140c22",
+  skin: "#f9d6c0",
+  blush: "#ffb3a6",
+  hair: "#e3c47e",
+  hairShade: "#c49f55",
+  hairLight: "#f4e7bf",
+  brow: "#a9824a",
+  irisRing: "#4a1d0b",
+  iris: "#b0561d",
+  irisLight: "#eaa04c",
+  pupil: "#1a0b06",
+  lash: "#3a2414",
+  parka: "#2f6a3b",
+  parkaShade: "#22512c",
+  fur: "#f1e8d4",
+  furShade: "#ddd0b4",
+  tee: "#f4f1ea",
+  jeans: "#2d4a64",
+  boot: "#6b4226",
+  sole: "#3b2516",
+  book: "#8f2621",
+  bookDark: "#6a1916",
+  pages: "#f3ead3",
   gold: "#f2d77a",
+  brand: "#c642f3",
+  cyan: "#45bcf4",
 };
 
-/** 3-step ramp: light, mid, shadow; this is what makes it look hand-drawn. */
-function useToonRamp() {
+/** Matte painted-vinyl finish, like a collectible figure. */
+const Vinyl = ({ color, rough = 0.62, emissive, glow = 0 }: { color: string; rough?: number; emissive?: string; glow?: number }) => (
+  <meshStandardMaterial color={color} roughness={rough} metalness={0} envMapIntensity={0.2} emissive={emissive ?? "#000000"} emissiveIntensity={glow} />
+);
+
+type Lock = { pos: [number, number, number]; quat: THREE.Quaternion; len: number; r: number; flat: number; shade: 0 | 1 | 2 };
+type V3 = [number, number, number];
+
+/** A pointed lock from root `a` to tip `b`, flattened so its broad side faces away from the head. */
+function lock(a: V3, b: V3, r: number, shade: 0 | 1 | 2 = 0, flat = 0.7): Lock {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
+  const y = B.clone().sub(A);
+  const len = y.length();
+  y.normalize();
+  const mid = A.clone().add(B).multiplyScalar(0.5);
+  const out = mid.clone().normalize();
+  const z = out.sub(y.clone().multiplyScalar(out.dot(y))).normalize();
+  const x = new THREE.Vector3().crossVectors(y, z).normalize();
+  const quat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  return { pos: mid.toArray() as V3, quat, len, r, flat, shade };
+}
+
+/** Unit leaf-shaped lock (y from -0.5 to 0.5): rounded at the root, widest near it, sharp tip. */
+function useLeafGeometry() {
   return useMemo(() => {
-    const data = new Uint8Array([70, 70, 70, 255, 170, 170, 170, 255, 255, 255, 255, 255]);
-    const tex = new THREE.DataTexture(data, 3, 1, THREE.RGBAFormat);
-    tex.minFilter = THREE.NearestFilter;
-    tex.magFilter = THREE.NearestFilter;
-    tex.needsUpdate = true;
-    return tex;
+    const pts: THREE.Vector2[] = [];
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16;
+      pts.push(new THREE.Vector2(Math.max(0.001, Math.sin(Math.PI * Math.pow(t, 0.65))) * 1, t - 0.5));
+    }
+    return new THREE.LatheGeometry(pts, 14);
   }, []);
 }
 
-type ToonProps = { color: string; ramp: THREE.Texture; emissive?: string; glow?: number };
-const Toon = ({ color, ramp, emissive = "#000000", glow = 0 }: ToonProps) => (
-  <meshToonMaterial color={color} gradientMap={ramp} emissive={emissive} emissiveIntensity={glow} />
-);
-const Ink = ({ t = 0.025 }: { t?: number }) => <Outlines thickness={t} color={C.ink} />;
+/** Point on a sphere: polar angle from the top, azimuth from the front (+z). */
+const onSphere = (radius: number, theta: number, phi: number): V3 => [
+  radius * Math.sin(theta) * Math.sin(phi),
+  radius * Math.cos(theta),
+  radius * Math.sin(theta) * Math.cos(phi),
+];
 
-type Strand = { pos: [number, number, number]; rot: THREE.Euler; len: number; r: number; tip: boolean };
-
-/** Layered, side-swept hair. Strands start on the scalp and point outward/downward. */
-function makeHair(): Strand[] {
-  const out: Strand[] = [];
-  const up = new THREE.Vector3(0, 1, 0);
-  const add = (theta: number, phi: number, len: number, r: number, bend: THREE.Vector3, tip = false) => {
-    const dir = new THREE.Vector3(Math.sin(theta) * Math.sin(phi), Math.cos(theta), Math.sin(theta) * Math.cos(phi));
-    const along = dir.clone().add(bend).normalize();
-    const q = new THREE.Quaternion().setFromUnitVectors(up, along);
-    const base = dir.clone().multiplyScalar(0.95).add(along.clone().multiplyScalar(len * 0.45));
-    out.push({ pos: [base.x, base.y, base.z], rot: new THREE.Euler().setFromQuaternion(q), len, r, tip });
-  };
-  // crown layers, swept back and to the right
-  for (let i = 0; i < 14; i++) {
-    const phi = (i / 14) * Math.PI * 2;
-    add(0.7 + (i % 3) * 0.12, phi, 0.5 + (i % 2) * 0.12, 0.3, new THREE.Vector3(0.2, -1.2, -0.4), i % 5 === 0);
-  }
-  // back of the head: longer, falling down
-  for (let i = 0; i < 10; i++) {
-    const phi = Math.PI * 0.55 + (i / 9) * Math.PI * 0.9;
-    add(1.15, phi, 0.8, 0.3, new THREE.Vector3(0, -2, -0.15), i % 3 === 1);
-  }
-  // sideburns
-  for (const s of [1, -1]) add(1.35, s * 1.25, 0.8, 0.2, new THREE.Vector3(0, -1.8, 0.1), s === 1);
-  // bangs: asymmetric, sweeping across to his left
+/** Layered petal locks like the sculpted figure: heavy bangs, side locks, a two-tier helmet and a few spikes. */
+function makeHair(): Lock[] {
+  const out: Lock[] = [];
+  // bangs: hang over the forehead down to the brows, slightly swept
   [
-    [-0.75, 0.75, 0.2],
-    [-0.42, 0.85, 0.21],
-    [-0.1, 0.95, 0.23],
-    [0.22, 0.85, 0.22],
-    [0.52, 0.72, 0.2],
-  ].forEach(([phi, len, r], i) => add(0.68, phi, len, r, new THREE.Vector3(-0.55, -1.7, 0.45), i === 1 || i === 3));
+    [-0.66, -0.74, 0.02, 0.21, 1],
+    [-0.44, -0.5, 0.14, 0.22, 0],
+    [-0.22, -0.26, 0.06, 0.22, 2],
+    [0.0, -0.02, 0.16, 0.22, 0],
+    [0.22, 0.2, 0.08, 0.22, 1],
+    [0.44, 0.46, 0.15, 0.21, 0],
+    [0.65, 0.74, 0.0, 0.2, 2],
+  ].forEach(([x0, x1, y1, r, shade]) => out.push(lock([x0, 0.98, 0.5 - Math.abs(x0) * 0.25], [x1, y1, 0.97 - Math.abs(x1) * 0.42], r, shade as 0 | 1 | 2)));
+  // side locks framing the cheeks
+  for (const s of [1, -1]) {
+    out.push(lock([s * 0.86, 0.55, 0.35], [s * 0.98, -0.5, 0.5], 0.22, 1));
+    out.push(lock([s * 0.95, 0.5, 0.0], [s * 1.08, -0.55, 0.12], 0.24, 0));
+  }
+  // helmet: upper and lower tiers of petals around the sides and back, tips flaring out
+  for (let i = 0; i <= 14; i++) {
+    const phi = 0.9 + (i / 14) * (Math.PI * 2 - 1.8);
+    out.push(lock(onSphere(1.02, 0.35, phi), onSphere(1.24, 1.12, phi + 0.06), 0.22, i % 3 === 0 ? 2 : 0));
+    out.push(lock(onSphere(1.06, 0.95, phi - 0.1), onSphere(1.22, 1.9, phi), 0.22, i % 2 ? 1 : 0));
+  }
+  // crown petals over the top of the cap
+  for (let i = 0; i < 7; i++) {
+    const phi = -0.9 + (i / 6) * 1.8;
+    out.push(lock(onSphere(1.02, 0.05, phi + Math.PI), onSphere(1.16, 0.62, phi), 0.22, i % 3 === 1 ? 2 : 0));
+  }
+  // a few short spikes on top
+  out.push(lock([0.05, 1.0, 0.05], [0.18, 1.42, -0.12], 0.13, 2));
+  out.push(lock([-0.15, 1.0, -0.05], [-0.32, 1.32, -0.3], 0.12, 0));
+  out.push(lock([0.25, 0.95, -0.2], [0.5, 1.22, -0.42], 0.11, 1));
   return out;
 }
 
-function Eye({ side, look, blink, mood, ramp }: { side: 1 | -1; look: React.RefObject<THREE.Vector2>; blink: React.RefObject<number>; mood: React.RefObject<number>; ramp: THREE.Texture }) {
+function Eye({ side, look, blink }: { side: 1 | -1; look: React.RefObject<THREE.Vector2>; blink: React.RefObject<number> }) {
   const lid = useRef<THREE.Group>(null);
   const iris = useRef<THREE.Group>(null);
   useFrame((_, dt) => {
     if (iris.current && look.current) {
-      iris.current.position.x = THREE.MathUtils.damp(iris.current.position.x, look.current.x * 0.05, 10, dt);
-      iris.current.position.y = THREE.MathUtils.damp(iris.current.position.y, look.current.y * 0.05, 10, dt);
+      iris.current.position.x = THREE.MathUtils.damp(iris.current.position.x, look.current.x * 0.045, 10, dt);
+      iris.current.position.y = THREE.MathUtils.damp(iris.current.position.y, look.current.y * 0.04, 10, dt);
     }
-    if (lid.current) lid.current.scale.y = Math.min(blink.current ?? 1, 1 - (mood.current ?? 0) * 0.5);
+    if (lid.current) lid.current.scale.y = blink.current ?? 1;
   });
   return (
-    <group position={[side * 0.33, -0.12, 0.84]} rotation={[0, side * 0.34, 0]}>
+    <group position={[side * 0.36, -0.2, 0.83]} rotation={[0.05, side * 0.36, 0]}>
       <group ref={lid}>
-        {/* white */}
-        <mesh scale={[0.2, 0.25, 0.06]}>
+        <mesh scale={[0.23, 0.26, 0.06]}>
           <sphereGeometry args={[1, 32, 32]} />
-          <meshBasicMaterial color="#ffffff" />
-          <Ink t={0.012} />
+          <meshStandardMaterial color="#fffdf8" roughness={0.25} />
         </mesh>
-        <group ref={iris} position={[side * -0.02, -0.01, 0.045]}>
-          <mesh scale={[0.15, 0.2, 0.04]}>
+        <group ref={iris} position={[side * -0.015, -0.015, 0.04]}>
+          <mesh scale={[0.18, 0.215, 0.04]}>
             <sphereGeometry args={[1, 32, 32]} />
-            <Toon color={C.iris} ramp={ramp} emissive={C.iris} glow={0.35} />
+            <meshStandardMaterial color={C.irisRing} roughness={0.2} />
           </mesh>
-          <mesh scale={[0.09, 0.12, 0.03]} position={[0, -0.02, 0.02]}>
+          <mesh scale={[0.155, 0.19, 0.04]} position={[0, 0, 0.006]}>
+            <sphereGeometry args={[1, 32, 32]} />
+            <meshStandardMaterial color={C.iris} roughness={0.15} />
+          </mesh>
+          {/* warm lower glow, painted-figure style */}
+          <mesh scale={[0.12, 0.08, 0.03]} position={[0, -0.09, 0.022]}>
+            <sphereGeometry args={[1, 24, 16]} />
+            <meshStandardMaterial color={C.irisLight} roughness={0.2} />
+          </mesh>
+          <mesh scale={[0.075, 0.095, 0.03]} position={[0, 0.01, 0.025]}>
             <sphereGeometry args={[1, 24, 24]} />
-            <meshBasicMaterial color={C.ink} />
+            <meshStandardMaterial color={C.pupil} roughness={0.1} />
           </mesh>
-          {/* lower iris glow, a common anime touch */}
-          <mesh scale={[0.1, 0.05, 0.02]} position={[0, -0.12, 0.03]}>
-            <sphereGeometry args={[1, 16, 16]} />
-            <meshBasicMaterial color={C.tip} />
-          </mesh>
-          <mesh position={[side * -0.05, 0.08, 0.05]} scale={0.045}>
+          <mesh position={[side * -0.06, 0.08, 0.05]} scale={[0.05, 0.06, 0.02]}>
             <sphereGeometry args={[1, 16, 16]} />
             <meshBasicMaterial color="#ffffff" />
           </mesh>
-          <mesh position={[side * 0.05, -0.05, 0.05]} scale={0.022}>
+          <mesh position={[side * 0.06, -0.07, 0.05]} scale={0.022}>
             <sphereGeometry args={[1, 12, 12]} />
             <meshBasicMaterial color="#ffffff" />
           </mesh>
         </group>
       </group>
-      {/* upper lash line */}
-      <mesh position={[0, 0.2, 0.05]} rotation={[0, 0, side * -0.12]} scale={[1, 0.6, 1]}>
-        <torusGeometry args={[0.19, 0.026, 8, 24, Math.PI]} />
-        <meshBasicMaterial color={C.ink} />
+      {/* thick upper lash line */}
+      <mesh position={[0, 0.03, 0.04]} rotation={[0, 0, side * -0.08]} scale={[1.05, 0.95, 1]}>
+        <torusGeometry args={[0.235, 0.028, 8, 28, Math.PI * 0.95]} />
+        <meshStandardMaterial color={C.lash} roughness={0.5} />
       </mesh>
-      {/* brow */}
-      <mesh position={[side * 0.02, 0.36, 0.04]} rotation={[0, 0, side * -0.18]}>
-        <capsuleGeometry args={[0.022, 0.2, 4, 8]} />
-        <meshBasicMaterial color={C.hairShade} />
+      {/* brow: slightly furrowed, the serious reading look */}
+      <mesh position={[side * 0.01, 0.37, 0.02]} rotation={[0, 0, Math.PI / 2 + side * 0.14]}>
+        <capsuleGeometry args={[0.022, 0.18, 4, 8]} />
+        <meshStandardMaterial color={C.brow} roughness={0.6} />
       </mesh>
     </group>
   );
 }
 
-function Limb({ armRef, side, ramp }: { armRef: (g: THREE.Group | null) => void; side: 1 | -1; ramp: THREE.Texture }) {
+function Arm({ armRef, side }: { armRef: (g: THREE.Group | null) => void; side: 1 | -1 }) {
   return (
-    <group ref={armRef} position={[side * 0.55, -1.12, 0]}>
-      <mesh position={[side * 0.06, -0.33, 0]} rotation={[0, 0, side * 0.12]}>
-        <capsuleGeometry args={[0.14, 0.48, 6, 16]} />
-        <Toon color={C.jacket} ramp={ramp} />
-        <Ink />
+    <group ref={armRef} position={[side * 0.56, -1.12, 0]}>
+      <mesh position={[side * 0.05, -0.3, 0]} rotation={[0, 0, side * 0.1]}>
+        <capsuleGeometry args={[0.17, 0.42, 8, 16]} />
+        <Vinyl color={C.parka} />
       </mesh>
-      {/* glowing cuff */}
-      <mesh position={[side * 0.11, -0.66, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.13, 0.03, 8, 24]} />
-        <meshBasicMaterial color={C.seam} />
+      {/* rolled cuff */}
+      <mesh position={[side * 0.1, -0.6, 0]} rotation={[Math.PI / 2, 0, side * 0.1]}>
+        <torusGeometry args={[0.15, 0.045, 10, 24]} />
+        <Vinyl color={C.parkaShade} />
       </mesh>
-      <mesh position={[side * 0.12, -0.8, 0]}>
-        <sphereGeometry args={[0.13, 20, 20]} />
-        <Toon color={C.skin} ramp={ramp} />
-        <Ink t={0.02} />
+      <mesh position={[side * 0.11, -0.74, 0]} scale={[1, 1.05, 0.9]}>
+        <sphereGeometry args={[0.135, 20, 20]} />
+        <Vinyl color={C.skin} rough={0.5} />
       </mesh>
     </group>
   );
 }
 
-function Prop({ pose, ramp }: { pose: Pose; ramp: THREE.Texture }) {
+function Book() {
+  return (
+    <group position={[0, -1.62, 0.8]} rotation={[-0.75, 0, 0]}>
+      {[1, -1].map((s) => (
+        <group key={s} rotation={[0, 0, s * -0.22]}>
+          {/* cover */}
+          <mesh position={[s * 0.24, 0, 0]}>
+            <boxGeometry args={[0.48, 0.035, 0.64]} />
+            <Vinyl color={C.book} rough={0.55} />
+          </mesh>
+          {/* page block */}
+          <mesh position={[s * 0.22, 0.05, 0]}>
+            <boxGeometry args={[0.42, 0.07, 0.58]} />
+            <Vinyl color={C.pages} rough={0.85} />
+          </mesh>
+        </group>
+      ))}
+      {/* spine with gold bands */}
+      <mesh position={[0, -0.02, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.05, 0.05, 0.64, 16]} />
+        <Vinyl color={C.bookDark} />
+      </mesh>
+      {[0.2, -0.2].map((z) => (
+        <mesh key={z} position={[0, -0.02, z]} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.052, 0.012, 6, 16]} />
+          <meshStandardMaterial color={C.gold} metalness={0.8} roughness={0.3} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function Prop({ pose }: { pose: Pose }) {
   const ref = useRef<THREE.Group>(null);
   useFrame((s) => ref.current && (ref.current.rotation.y = Math.sin(s.clock.elapsedTime * 1.2) * 0.2));
+  if (pose === "idle" || pose === "read") return <Book />;
   if (pose === "laptop")
     return (
-      <group ref={ref} position={[0, -1.85, 0.75]} rotation={[0.25, 0, 0]}>
+      <group ref={ref} position={[0, -1.72, 0.78]} rotation={[0.25, 0, 0]}>
         <mesh>
           <boxGeometry args={[1.1, 0.06, 0.7]} />
-          <Toon color="#25202f" ramp={ramp} />
-          <Ink />
+          <meshStandardMaterial color="#25202f" metalness={0.6} roughness={0.35} />
         </mesh>
         <group position={[0, 0.34, -0.34]} rotation={[-0.35, 0, 0]}>
           <mesh>
             <boxGeometry args={[1.1, 0.68, 0.05]} />
-            <Toon color="#25202f" ramp={ramp} />
-            <Ink />
+            <meshStandardMaterial color="#25202f" metalness={0.6} roughness={0.35} />
           </mesh>
           <mesh position={[0, 0, 0.03]}>
             <planeGeometry args={[0.98, 0.56]} />
-            <meshBasicMaterial color={C.seam} />
+            <meshBasicMaterial color={C.brand} />
           </mesh>
           {[0.16, 0.02, -0.12].map((y, i) => (
             <mesh key={y} position={[-0.12 + i * 0.05, y, 0.035]}>
               <planeGeometry args={[0.6 - i * 0.12, 0.05]} />
-              <meshBasicMaterial color={i === 1 ? C.tip : "#fbf7ff"} />
+              <meshBasicMaterial color={i === 1 ? C.cyan : "#fbf7ff"} />
             </mesh>
           ))}
         </group>
@@ -198,33 +267,29 @@ function Prop({ pose, ramp }: { pose: Pose; ramp: THREE.Texture }) {
         {[0, 1, 2].map((i) => (
           <mesh key={i} position={[-i * 0.28, -i * 0.3, 0]} scale={0.18 - i * 0.05}>
             <sphereGeometry args={[1, 20, 20]} />
-            <meshBasicMaterial color="#fbf7ff" />
-            <Ink t={0.04} />
+            <Vinyl color="#fbf7ff" rough={0.4} />
           </mesh>
         ))}
         <mesh position={[0.35, 0.4, 0]}>
           <octahedronGeometry args={[0.28, 0]} />
-          <Toon color={C.gold} ramp={ramp} emissive={C.gold} glow={0.3} />
-          <Ink />
+          <meshStandardMaterial color={C.gold} metalness={0.7} roughness={0.25} emissive={C.gold} emissiveIntensity={0.2} />
         </mesh>
       </group>
     );
   if (pose === "cheer")
     return (
-      <group ref={ref} position={[0, 2.0, 0]}>
+      <group ref={ref} position={[0, 2.05, 0]}>
         <mesh position={[0, 0.2, 0]}>
           <cylinderGeometry args={[0.32, 0.13, 0.44, 32]} />
-          <Toon color={C.gold} ramp={ramp} emissive={C.gold} glow={0.25} />
-          <Ink />
+          <meshStandardMaterial color={C.gold} metalness={0.85} roughness={0.25} />
         </mesh>
         <mesh position={[0, -0.1, 0]}>
           <cylinderGeometry args={[0.05, 0.05, 0.22, 12]} />
-          <Toon color={C.gold} ramp={ramp} />
+          <meshStandardMaterial color={C.gold} metalness={0.85} roughness={0.25} />
         </mesh>
         <mesh position={[0, -0.22, 0]}>
           <cylinderGeometry args={[0.18, 0.2, 0.08, 24]} />
-          <Toon color={C.gold} ramp={ramp} />
-          <Ink />
+          <meshStandardMaterial color={C.gold} metalness={0.85} roughness={0.25} />
         </mesh>
       </group>
     );
@@ -233,24 +298,51 @@ function Prop({ pose, ramp }: { pose: Pose; ramp: THREE.Texture }) {
       <group ref={ref} position={[1.25, 1.4, 0]}>
         <mesh>
           <torusGeometry args={[0.2, 0.07, 12, 32, Math.PI * 1.4]} />
-          <meshBasicMaterial color={C.tip} />
-          <Ink />
+          <Vinyl color={C.cyan} rough={0.35} />
         </mesh>
         <mesh position={[0.02, -0.42, 0]}>
           <sphereGeometry args={[0.08, 16, 16]} />
-          <meshBasicMaterial color={C.tip} />
-          <Ink />
+          <Vinyl color={C.cyan} rough={0.35} />
         </mesh>
       </group>
     );
   return null;
 }
 
+/** Fluffy fur collar: a soft ring plus a crown of little tufts, like the sculpted figure. */
+function FurCollar() {
+  const tufts = useMemo(() => {
+    const up = new THREE.Vector3(0, 1, 0);
+    return Array.from({ length: 34 }, (_, i) => {
+      const a = (i / 34) * Math.PI * 2;
+      const row = i % 2;
+      const radial = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
+      const dir = radial.clone().multiplyScalar(1).add(new THREE.Vector3(0, row ? 0.6 : 0.1, 0)).normalize();
+      const pos = new THREE.Vector3(Math.sin(a) * 0.62, row ? 0.04 : -0.05, Math.cos(a) * 0.54);
+      return { pos: pos.toArray() as [number, number, number], rot: new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(up, dir)), shade: i % 3 === 0 };
+    });
+  }, []);
+  return (
+    <group position={[0, -1.18, 0]}>
+      <mesh rotation={[Math.PI / 2, 0, 0]} scale={[1.1, 0.95, 1]}>
+        <torusGeometry args={[0.52, 0.14, 16, 40]} />
+        <Vinyl color={C.fur} rough={0.9} />
+      </mesh>
+      {tufts.map((t, i) => (
+        <mesh key={i} position={t.pos} rotation={t.rot}>
+          <coneGeometry args={[0.06, 0.18, 6]} />
+          <Vinyl color={t.shade ? C.furShade : C.fur} rough={0.92} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 export default function Mascot({ scale = 1, position = [0, 0, 0] as [number, number, number], pose = "idle" as Pose }) {
-  const ramp = useToonRamp();
   const root = useRef<THREE.Group>(null);
   const head = useRef<THREE.Group>(null);
   const hairRef = useRef<THREE.Group>(null);
+  const mouth = useRef<THREE.Mesh>(null);
   const arms = useRef<Record<string, THREE.Group | null>>({});
   const look = useRef(new THREE.Vector2());
   const blink = useRef(1);
@@ -259,20 +351,25 @@ export default function Mascot({ scale = 1, position = [0, 0, 0] as [number, num
   const hop = useRef(0);
   const [hover, setHover] = useState(false);
   const hair = useMemo(makeHair, []);
+  const leaf = useLeafGeometry();
+  const reading = pose === "idle" || pose === "read";
 
   useFrame((state, dt) => {
     const t = state.clock.elapsedTime;
-    look.current.set(state.pointer.x, state.pointer.y);
+    look.current.set(state.pointer.x, reading && !hover ? -0.6 : state.pointer.y);
     mood.current = THREE.MathUtils.damp(mood.current, hover || pose === "cheer" ? 1 : 0, 8, dt);
 
     if (head.current) {
       const tilt = pose === "think" ? 0.2 : pose === "lost" ? Math.sin(t * 2) * 0.15 : 0;
-      head.current.rotation.y = THREE.MathUtils.damp(head.current.rotation.y, state.pointer.x * 0.5, 4, dt);
-      head.current.rotation.x = THREE.MathUtils.damp(head.current.rotation.x, -state.pointer.y * 0.28 + (pose === "laptop" ? 0.2 : 0), 4, dt);
+      // reading: eyes down on the book until you hover him, then he looks up at you
+      const down = reading && !hover ? 0.16 : pose === "laptop" ? 0.2 : 0;
+      head.current.rotation.y = THREE.MathUtils.damp(head.current.rotation.y, state.pointer.x * (reading && !hover ? 0.15 : 0.5), 4, dt);
+      head.current.rotation.x = THREE.MathUtils.damp(head.current.rotation.x, -state.pointer.y * 0.25 + down, 4, dt);
       head.current.rotation.z = THREE.MathUtils.damp(head.current.rotation.z, tilt + Math.sin(t * 0.8) * 0.03, 4, dt);
     }
-    // hair sways a little, like wind
-    if (hairRef.current) hairRef.current.rotation.z = Math.sin(t * 1.3) * 0.025;
+    if (hairRef.current) hairRef.current.rotation.z = Math.sin(t * 1.3) * 0.02;
+    // pout by default, small smile when happy
+    if (mouth.current) mouth.current.rotation.z = mood.current > 0.5 ? Math.PI : 0;
 
     const L = arms.current.l, R = arms.current.r;
     const set = (g: THREE.Group | null | undefined, z: number, x: number) => {
@@ -282,16 +379,21 @@ export default function Mascot({ scale = 1, position = [0, 0, 0] as [number, num
     };
     const wave = Math.sin(t * 7) * 0.35;
     switch (pose) {
+      case "idle":
+      case "read":
+        set(R, -0.38, -1.05 + Math.sin(t * 1.4) * 0.03);
+        set(L, 0.38, -1.05 + Math.sin(t * 1.4) * 0.03);
+        break;
       case "wave":
         set(R, 2.5 + wave, 0);
         set(L, -0.12, 0);
         break;
       case "laptop":
-        set(R, 0.3, -1.15 + Math.sin(t * 14) * 0.06);
-        set(L, -0.3, -1.15 + Math.cos(t * 14) * 0.06);
+        set(R, -0.3, -1.15 + Math.sin(t * 14) * 0.06);
+        set(L, 0.3, -1.15 + Math.cos(t * 14) * 0.06);
         break;
       case "think":
-        set(R, 0.95, -1.7);
+        set(R, -0.5, -1.9);
         set(L, -0.2, -0.3);
         break;
       case "cheer":
@@ -302,9 +404,6 @@ export default function Mascot({ scale = 1, position = [0, 0, 0] as [number, num
         set(R, 0.6 + Math.sin(t * 2) * 0.2, -0.4);
         set(L, -0.6 - Math.sin(t * 2) * 0.2, -0.4);
         break;
-      default:
-        set(R, hover ? 2.5 + wave : 0.1, 0);
-        set(L, -0.1, 0);
     }
 
     if (t > nextBlink.current) {
@@ -338,154 +437,129 @@ export default function Mascot({ scale = 1, position = [0, 0, 0] as [number, num
         onPointerOut={() => (setHover(false), (document.body.style.cursor = ""))}
         onClick={(e) => (e.stopPropagation(), hop.current <= 0 && (hop.current = 1))}
       >
-        {/* legs + shoes */}
+        {/* legs: jeans + brown boots */}
         {[1, -1].map((s) => (
-          <group key={s} position={[s * 0.22, -2.45, 0]}>
+          <group key={s} position={[s * 0.23, -2.3, 0]}>
             <mesh>
-              <capsuleGeometry args={[0.16, 0.45, 6, 16]} />
-              <Toon color={C.pants} ramp={ramp} />
-              <Ink />
+              <capsuleGeometry args={[0.18, 0.3, 8, 16]} />
+              <Vinyl color={C.jeans} rough={0.75} />
             </mesh>
-            <mesh position={[0, -0.42, 0.08]} scale={[1, 0.6, 1.4]}>
-              <sphereGeometry args={[0.19, 20, 20]} />
-              <Toon color={C.shoe} ramp={ramp} />
-              <Ink />
+            <mesh position={[0, -0.33, 0.06]} scale={[1, 0.78, 1.3]}>
+              <sphereGeometry args={[0.22, 24, 20]} />
+              <Vinyl color={C.boot} rough={0.5} />
             </mesh>
-            <mesh position={[0, -0.5, 0.08]} rotation={[Math.PI / 2, 0, 0]} scale={[1, 1.4, 1]}>
-              <torusGeometry args={[0.17, 0.025, 8, 24]} />
-              <meshBasicMaterial color={C.tip} />
+            <mesh position={[0, -0.47, 0.07]} scale={[1, 1, 1.3]}>
+              <cylinderGeometry args={[0.21, 0.22, 0.07, 24]} />
+              <Vinyl color={C.sole} rough={0.8} />
+            </mesh>
+            {/* boot cuff */}
+            <mesh position={[0, -0.18, 0]} rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[0.18, 0.035, 8, 24]} />
+              <Vinyl color={C.boot} rough={0.5} />
             </mesh>
           </group>
         ))}
 
-        {/* torso: techwear jacket */}
-        <group position={[0, -1.6, 0]}>
-          <mesh scale={[1, 1, 0.78]}>
-            <capsuleGeometry args={[0.5, 0.55, 8, 24]} />
-            <Toon color={C.jacket} ramp={ramp} />
-            <Ink />
+        {/* parka */}
+        <group position={[0, -1.55, 0]}>
+          <mesh scale={[1, 1, 0.82]}>
+            <capsuleGeometry args={[0.52, 0.42, 8, 24]} />
+            <Vinyl color={C.parka} />
           </mesh>
-          {/* zip + glowing seams */}
-          <mesh position={[0, 0, 0.4]}>
-            <boxGeometry args={[0.03, 0.95, 0.02]} />
-            <meshBasicMaterial color="#8d86a0" />
+          {/* flared hem */}
+          <mesh position={[0, -0.42, 0]} scale={[1, 1, 0.84]}>
+            <cylinderGeometry args={[0.5, 0.64, 0.38, 32]} />
+            <Vinyl color={C.parka} />
           </mesh>
-          {[1, -1].map((s) => (
-            <mesh key={s} position={[s * 0.26, -0.05, 0.36]} rotation={[0, s * 0.35, s * 0.18]}>
-              <boxGeometry args={[0.025, 0.8, 0.02]} />
-              <meshBasicMaterial color={C.seam} />
+          {/* open front showing the white tee */}
+          <mesh position={[0, 0.18, 0.4]} scale={[0.24, 0.3, 0.08]}>
+            <sphereGeometry args={[1, 24, 16]} />
+            <Vinyl color={C.tee} rough={0.85} />
+          </mesh>
+          {/* placket + toggles */}
+          <mesh position={[0, -0.25, 0.47]}>
+            <boxGeometry args={[0.06, 0.62, 0.04]} />
+            <Vinyl color={C.parkaShade} />
+          </mesh>
+          {[-0.05, -0.3].map((y) => (
+            <mesh key={y} position={[0, y, 0.5]} rotation={[0, 0, Math.PI / 2]}>
+              <capsuleGeometry args={[0.025, 0.08, 4, 8]} />
+              <Vinyl color={C.fur} rough={0.5} />
             </mesh>
           ))}
-          <mesh position={[0, -0.5, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[1, 0.78, 1]}>
-            <torusGeometry args={[0.5, 0.04, 8, 40]} />
-            <meshBasicMaterial color={C.seam} />
-          </mesh>
-          {/* high collar */}
-          <mesh position={[0, 0.58, 0]}>
-            <cylinderGeometry args={[0.3, 0.38, 0.28, 24, 1, true]} />
-            <Toon color={C.jacket} ramp={ramp} />
-            <Ink />
-          </mesh>
-        </group>
-
-        {/* neck */}
-        <mesh position={[0, -0.92, 0]}>
-          <cylinderGeometry args={[0.15, 0.17, 0.3, 16]} />
-          <Toon color={C.skin} ramp={ramp} />
-        </mesh>
-        {/* headset resting on the neck */}
-        <group position={[0, -1.02, 0.05]}>
-          <mesh rotation={[Math.PI / 2 + 0.2, 0, 0]}>
-            <torusGeometry args={[0.36, 0.045, 10, 40, Math.PI * 1.25]} />
-            <Toon color="#25202f" ramp={ramp} />
-            <Ink t={0.015} />
-          </mesh>
+          {/* pockets */}
           {[1, -1].map((s) => (
-            <group key={s} position={[s * 0.36, -0.02, 0.18]} rotation={[0, s * 0.5, Math.PI / 2]}>
-              <mesh>
-                <cylinderGeometry args={[0.17, 0.17, 0.12, 24]} />
-                <Toon color="#25202f" ramp={ramp} />
-                <Ink t={0.015} />
-              </mesh>
-              <mesh position={[0, s * 0.065, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                <torusGeometry args={[0.11, 0.022, 8, 32]} />
-                <meshBasicMaterial color={C.tip} />
-              </mesh>
-            </group>
+            <mesh key={s} position={[s * 0.33, -0.42, 0.46]} rotation={[0, s * 0.45, 0]}>
+              <boxGeometry args={[0.26, 0.2, 0.03]} />
+              <Vinyl color={C.parkaShade} />
+            </mesh>
           ))}
         </group>
 
-        <Limb side={1} armRef={(g) => (arms.current.r = g)} ramp={ramp} />
-        <Limb side={-1} armRef={(g) => (arms.current.l = g)} ramp={ramp} />
+        {/* hood resting on the back */}
+        <mesh position={[0, -1.02, -0.5]} scale={[1.1, 0.75, 0.7]}>
+          <sphereGeometry args={[0.58, 32, 24]} />
+          <Vinyl color={C.parka} />
+        </mesh>
+        <FurCollar />
+
+        <Arm side={1} armRef={(g) => (arms.current.r = g)} />
+        <Arm side={-1} armRef={(g) => (arms.current.l = g)} />
 
         <group ref={head}>
-          {/* face: slightly long, soft jaw */}
-          <mesh scale={[0.9, 1, 0.88]}>
+          {/* big round chibi face */}
+          <mesh scale={[0.96, 0.94, 0.9]}>
             <sphereGeometry args={[1, 48, 48]} />
-            <Toon color={C.skin} ramp={ramp} />
-            <Ink t={0.02} />
+            <Vinyl color={C.skin} rough={0.48} />
           </mesh>
-          <mesh position={[0, -0.55, 0.32]} scale={[0.55, 0.42, 0.5]}>
+          <mesh position={[0, -0.5, 0.3]} scale={[0.62, 0.42, 0.55]}>
             <sphereGeometry args={[1, 32, 32]} />
-            <Toon color={C.skin} ramp={ramp} />
+            <Vinyl color={C.skin} rough={0.48} />
           </mesh>
-          {/* ears */}
           {[1, -1].map((s) => (
-            <mesh key={s} position={[s * 0.88, -0.12, 0]} scale={[0.1, 0.18, 0.12]}>
+            <mesh key={s} position={[s * 0.93, -0.18, 0]} scale={[0.1, 0.18, 0.13]}>
               <sphereGeometry args={[1, 16, 16]} />
-              <Toon color={C.skin} ramp={ramp} />
-              <Ink t={0.015} />
+              <Vinyl color={C.skin} rough={0.48} />
             </mesh>
           ))}
-          <Eye side={1} look={look} blink={blink} mood={mood} ramp={ramp} />
-          <Eye side={-1} look={look} blink={blink} mood={mood} ramp={ramp} />
-          {/* tiny nose + mouth */}
-          <mesh position={[0, -0.36, 0.86]} scale={[0.025, 0.035, 0.02]}>
-            <sphereGeometry args={[1, 8, 8]} />
-            <meshBasicMaterial color="#e8a99a" />
+          <Eye side={1} look={look} blink={blink} />
+          <Eye side={-1} look={look} blink={blink} />
+          {/* button nose */}
+          <mesh position={[0, -0.44, 0.88]} scale={[0.035, 0.03, 0.025]}>
+            <sphereGeometry args={[1, 12, 12]} />
+            <Vinyl color="#f5c9b4" rough={0.5} />
           </mesh>
-          <mesh position={[0.02, -0.55, 0.78]} rotation={[0.3, 0, pose === "lost" ? 0 : Math.PI]}>
-            <torusGeometry args={[0.07, 0.014, 6, 20, Math.PI * 0.8]} />
-            <meshBasicMaterial color={C.ink} />
+          {/* small pout (flips to a smile when happy) */}
+          <mesh ref={mouth} position={[0, -0.55, 0.83]} rotation={[0.25, 0, 0]}>
+            <torusGeometry args={[0.07, 0.017, 6, 20, Math.PI * 0.8]} />
+            <meshStandardMaterial color="#6e3426" roughness={0.5} />
           </mesh>
-          {/* blush */}
           {[1, -1].map((s) => (
-            <mesh key={s} position={[s * 0.48, -0.38, 0.7]} rotation={[0, s * 0.6, 0]} scale={[0.13, 0.055, 0.02]}>
+            <mesh key={s} position={[s * 0.5, -0.45, 0.68]} rotation={[0, s * 0.6, 0]} scale={[0.13, 0.06, 0.02]}>
               <sphereGeometry args={[1, 16, 16]} />
-              <meshBasicMaterial color="#ff9fc0" transparent opacity={0.6} />
+              <meshStandardMaterial color={C.blush} transparent opacity={0.45} roughness={0.6} />
             </mesh>
           ))}
 
           {/* hair */}
           <group ref={hairRef}>
-            <mesh rotation={[-0.3, 0, 0]} scale={[0.97, 1, 0.97]}>
-              <sphereGeometry args={[1.1, 48, 32, 0, Math.PI * 2, 0, Math.PI * 0.52]} />
-              <Toon color={C.hair} ramp={ramp} />
-              <Ink t={0.02} />
+            <mesh rotation={[-0.32, 0, 0]} scale={[1, 1, 0.98]}>
+              <sphereGeometry args={[1.08, 48, 32, 0, Math.PI * 2, 0, Math.PI * 0.5]} />
+              <Vinyl color={C.hair} rough={0.6} />
             </mesh>
-            <mesh position={[0, -0.12, -0.22]} scale={[0.95, 1.02, 0.9]}>
+            <mesh position={[0, -0.1, -0.24]} scale={[0.98, 1.02, 0.9]}>
               <sphereGeometry args={[1, 40, 32]} />
-              <Toon color={C.hair} ramp={ramp} />
+              <Vinyl color={C.hair} rough={0.6} />
             </mesh>
             {hair.map((h, i) => (
-              <group key={i} position={h.pos} rotation={h.rot}>
-                <mesh>
-                  <coneGeometry args={[h.r, h.len, 8]} />
-                  <Toon color={i % 4 === 0 ? C.hairShade : C.hair} ramp={ramp} />
-                  <Ink t={0.018} />
-                </mesh>
-                {h.tip && (
-                  <mesh position={[0, h.len * 0.32, 0]}>
-                    <coneGeometry args={[h.r * 0.36, h.len * 0.36, 8]} />
-                    <Toon color={C.tip} ramp={ramp} emissive={C.tip} glow={0.4} />
-                  </mesh>
-                )}
-              </group>
+              <mesh key={i} position={h.pos} quaternion={h.quat} scale={[h.r, h.len, h.r * h.flat]} geometry={leaf}>
+                <Vinyl color={h.shade === 1 ? C.hairShade : h.shade === 2 ? C.hairLight : C.hair} rough={0.6} />
+              </mesh>
             ))}
           </group>
         </group>
 
-        <Prop pose={pose} ramp={ramp} />
+        <Prop pose={pose} />
       </group>
     </Float>
   );

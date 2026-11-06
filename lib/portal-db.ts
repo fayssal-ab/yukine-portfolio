@@ -21,7 +21,7 @@ function database() {
 
   const ca = process.env.DB_SSL_CA_PATH
     ? readFileSync(process.env.DB_SSL_CA_PATH, "utf8")
-    : process.env.DB_SSL_CA;
+    : normalizeCertificate(process.env.DB_SSL_CA);
 
   pool = createPool({
     host: process.env.DB_HOST,
@@ -34,8 +34,45 @@ function database() {
     waitForConnections: true,
     connectionLimit: 3,
     queueLimit: 20,
+    connectTimeout: 8000,
   });
   return pool;
+}
+
+/**
+ * Hosting dashboards mangle multi-line PEM values: accept the raw certificate,
+ * one with literal "\\n" escapes, wrapped in quotes, or base64-encoded.
+ */
+function normalizeCertificate(value: string | undefined) {
+  if (!value) return undefined;
+  let pem = value.trim().replace(/^["']|["']$/g, "").replace(/\\n/g, "\n").replace(/\r/g, "");
+  if (!pem.includes("-----BEGIN")) {
+    const decoded = Buffer.from(pem, "base64").toString("utf8");
+    if (decoded.includes("-----BEGIN")) pem = decoded.trim();
+  }
+  // a certificate pasted on one line: put the base64 body back on its own lines
+  pem = pem.replace(/(-----BEGIN [A-Z ]+-----)\s*([\s\S]*?)\s*(-----END [A-Z ]+-----)/g, (_, head: string, body: string, tail: string) =>
+    `${head}\n${body.replace(/\s+/g, "").replace(/(.{64})/g, "$1\n").trim()}\n${tail}`,
+  );
+  return `${pem}\n`;
+}
+
+/** Turns a database failure into a short reason that is safe to show the site owner. */
+export function describeDbError(error: unknown): string {
+  const err = error as { code?: string; message?: string } | undefined;
+  const code = err?.code ?? "";
+  const message = err?.message ?? "";
+  if (message.startsWith("Missing database configuration")) return `${message}. Add them in Netlify → Environment variables (scope: Functions) and redeploy.`;
+  if (["ENOTFOUND", "EAI_AGAIN"].includes(code)) return "Database host not found: check DB_HOST.";
+  if (["ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "PROTOCOL_CONNECTION_LOST"].includes(code) || /timeout/i.test(message))
+    return "Cannot reach the database: check DB_HOST/DB_PORT and that the Aiven service is running (free services power off when idle).";
+  if (code === "ER_ACCESS_DENIED_ERROR") return "Database rejected the login: check DB_USER and DB_PASSWORD.";
+  if (code === "ER_BAD_DB_ERROR") return "Database name not found: check DB_NAME.";
+  if (code === "ER_DBACCESS_DENIED_ERROR" || code === "ER_TABLEACCESS_DENIED_ERROR") return "The database user lacks permission to create or use the tables.";
+  if (/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|certificate/i.test(code + message))
+    return "TLS certificate check failed: set DB_SSL_CA to the Aiven CA certificate (ca.pem contents).";
+  if (/PEM|asn1|OSSL/i.test(code + message)) return "DB_SSL_CA is not a valid certificate: paste the full ca.pem contents.";
+  return `Database error${code ? ` (${code})` : ""}.`;
 }
 
 export async function rows<T extends RowDataPacket>(
@@ -178,10 +215,17 @@ export async function getPortfolioStats() {
      ORDER BY views DESC, page_path ASC
      LIMIT 8`,
   );
+  const [daily] = await db.query<(RowDataPacket & { day: string; views: number })[]>(
+    `SELECT DATE_FORMAT(viewed_at, '%Y-%m-%d') AS day, COUNT(*) AS views
+     FROM portfolio_page_views
+     WHERE viewed_at >= DATE_SUB(UTC_DATE(), INTERVAL 13 DAY)
+     GROUP BY day`,
+  );
   return {
     allTime: totals[0],
     lastSevenDays: recent[0],
     topPages,
+    daily,
   };
 }
 

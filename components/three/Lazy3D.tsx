@@ -34,7 +34,7 @@ export function Shape3D({ kind, minWidth = 768 }: { kind: ShapeKind; minWidth?: 
 }
 
 /** Kai, the YUKINE mascot, on any screen size (falls back to the logo without WebGL). */
-export function Mascot3D({ pose = "wave" }: { pose?: Pose }) {
+export function Mascot3D({ pose = "read" }: { pose?: Pose }) {
   const ok = useCan3D(0);
   return ok ? <ShapeScene kind={`mascot-${pose}`} /> : null;
 }

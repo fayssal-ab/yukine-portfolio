@@ -5,22 +5,28 @@ import { isLocale, matchLocale } from "@/lib/i18n/config";
 // choice first (cookie), then their browser language.
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (/^\/(?:admin|login)(?:\/|$)/.test(pathname)) {
+
+  // Private area: /login and /admin, also reachable as /en/login, /ar/admin, /FR/Admin…
+  const priv = /^\/(?:([a-z]{2}(?:-[a-z]{2})?)\/)?(admin|login)(\/.*)?$/i.exec(pathname);
+  if (priv && (!priv[1] || isLocale(priv[1].toLowerCase()))) {
+    const clean = `/${priv[2].toLowerCase()}${priv[3] ?? ""}`;
     // Sign-in cookies must live on the same host as the OAuth callback, so the
     // private area is only served from the canonical domain.
-    const canonical = process.env.CANONICAL_SITE_URL;
+    const canonical = process.env.CANONICAL_SITE_URL ? new URL(process.env.CANONICAL_SITE_URL) : null;
+    // the real public host comes from the headers (nextUrl can hold an internal address)
+    const host = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host).split(",")[0].trim().toLowerCase();
+    const wrongHost = !!canonical && host !== canonical.host;
+    if (clean === pathname && !wrongHost) return;
+    const url = request.nextUrl.clone();
+    url.pathname = clean;
     if (canonical) {
-      const target = new URL(canonical);
-      if (request.nextUrl.host !== target.host) {
-        const url = request.nextUrl.clone();
-        url.protocol = target.protocol;
-        url.host = target.host;
-        url.port = target.port;
-        return NextResponse.redirect(url);
-      }
+      url.protocol = canonical.protocol;
+      url.host = canonical.host;
+      url.port = canonical.port;
     }
-    return;
+    return NextResponse.redirect(url);
   }
+
   const first = pathname.split("/")[1];
   if (isLocale(first)) return;
 
