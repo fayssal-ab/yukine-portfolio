@@ -5,7 +5,22 @@ import { isLocale, matchLocale } from "@/lib/i18n/config";
 // choice first (cookie), then their browser language.
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (/^\/(?:admin|login)(?:\/|$)/.test(pathname)) return;
+  if (/^\/(?:admin|login)(?:\/|$)/.test(pathname)) {
+    // Sign-in cookies must live on the same host as the OAuth callback, so the
+    // private area is only served from the canonical domain.
+    const canonical = process.env.CANONICAL_SITE_URL;
+    if (canonical) {
+      const target = new URL(canonical);
+      if (request.nextUrl.host !== target.host) {
+        const url = request.nextUrl.clone();
+        url.protocol = target.protocol;
+        url.host = target.host;
+        url.port = target.port;
+        return NextResponse.redirect(url);
+      }
+    }
+    return;
+  }
   const first = pathname.split("/")[1];
   if (isLocale(first)) return;
 

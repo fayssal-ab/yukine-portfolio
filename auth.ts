@@ -2,6 +2,12 @@ import NextAuth from "next-auth";
 import GitHub from "next-auth/providers/github";
 import type { DefaultSession } from "next-auth";
 
+// Pin the OAuth callback to the canonical domain so GitHub always receives the
+// redirect URI registered on the OAuth App, even on deploy-permalink hosts.
+if (!process.env.AUTH_URL && process.env.CANONICAL_SITE_URL) {
+  process.env.AUTH_URL = process.env.CANONICAL_SITE_URL;
+}
+
 const adminUsername = process.env.ADMIN_GITHUB_USERNAME?.trim().toLowerCase();
 
 export const { handlers, auth, signIn, signOut } = NextAuth({

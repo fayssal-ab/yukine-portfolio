@@ -41,6 +41,7 @@ Configure these for both local use and the deployed Netlify site:
 
 - `AUTH_SECRET` — a long random secret (for example, generate one with `openssl rand -base64 32`).
 - `AUTH_GITHUB_ID` and `AUTH_GITHUB_SECRET` — GitHub OAuth App credentials. Set its callback URL to `https://<your-site-domain>/api/auth/callback/github`.
+- `AUTH_URL=https://yukine.netlify.app` (optional on Netlify production, where the main site URL is used automatically) — pins the OAuth callback to the canonical domain. `/login` and `/admin` opened on a deploy-permalink host are redirected there.
 - `ADMIN_GITHUB_USERNAME=fayssal-ab` — the only GitHub account allowed into the admin area.
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` — Aiven MySQL connection settings.
 - `DB_SSL_CA` — Aiven CA certificate contents for deployment. Locally, `DB_SSL_CA_PATH` may point to a downloaded CA file instead.
